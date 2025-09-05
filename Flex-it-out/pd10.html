@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>FLEX-IT-OUT - Real-Time Fitness Tracker</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #1a1a1a, #3d0000);
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #app {
+            text-align: center;
+        }
+        video, canvas {
+            border: 2px solid #ff1e1e;
+            border-radius: 10px;
+        }
+        #feedback, #counter {
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 5px;
+            display: inline-block;
+        }
+        table {
+            margin-top: 10px;
+            border-collapse: collapse;
+            width: 200px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+        }
+        table, th, td {
+            border: 1px solid #ff1e1e;
+        }
+        th, td {
+            padding: 8px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<div id="app">
+    <h1>💪 FLEX-IT-OUT - Real-Time Fitness Tracker</h1>
+    <video id="video" width="1280" height="1280" autoplay playsinline></video>
+    <canvas id="canvas" width="1280" height="1280"></canvas>
+    <div id="feedback">Loading...</div>
+    <div id="counter">Reps: 0</div>
+    <table>
+        <tr><th>Exercise</th><th>Reps</th></tr>
+        <tr><td>Squats</td><td id="squatReps">0</td></tr>
+        <tr><td>Push-ups</td><td id="pushupReps">0</td></tr>
+    </table>
+</div>
+
+<script>
+const STATE = {
+    activity: 'unknown',
+    repCount: 0,
+    inPosition: false,
+    prevActivity: null,
+    squatReps: 0,
+    pushupReps: 0,
+};
+
+const videoElement = document.getElementById('video');
+const canvasElement = document.getElementById('canvas');
+const ctx = canvasElement.getContext('2d');
+
+let debounceTimer = null;
+
+function calculateAngle(a, b, c) {
+    const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+    let angle = Math.abs(radians * 180 / Math.PI);
+    return angle > 180 ? 360 - angle : angle;
+}
+
+function detectExercise(landmarks) {
+    const leftHip = landmarks[23], rightHip = landmarks[24];
+    const leftShoulder = landmarks[11], rightShoulder = landmarks[12];
+    const leftWrist = landmarks[15], rightWrist = landmarks[16];
+
+    const avgHipY = (leftHip.y + rightHip.y) / 2;
+    const avgShoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+    const avgWristY = (leftWrist.y + rightWrist.y) / 2;
+
+    if (avgWristY > 0.8) {
+        return 'pushup';
+    } else if (Math.abs(avgShoulderY - avgHipY) > 0.3) {
+        return 'squat';
+    } else {
+        return 'unknown';
+    }
+}
+
+function countRep() {
+    if (debounceTimer) return;
+    STATE.repCount++;
+    playFeedbackSound(`Reps: ${STATE.repCount}`);
+    debounceTimer = setTimeout(() => debounceTimer = null, 800);
+}
+
+function updateRepsTable() {
+    document.getElementById('squatReps').innerText = STATE.squatReps;
+    document.getElementById('pushupReps').innerText = STATE.pushupReps;
+}
+
+function analyzePose(landmarks) {
+    const feedbackDiv = document.getElementById('feedback');
+    const counterDiv = document.getElementById('counter');
+
+    const detectedActivity = detectExercise(landmarks);
+
+    if (detectedActivity !== STATE.prevActivity) {
+        if (STATE.prevActivity === 'squat') STATE.squatReps = STATE.repCount;
+        if (STATE.prevActivity === 'pushup') STATE.pushupReps = STATE.repCount;
+        updateRepsTable();
+
+        STATE.repCount = 0;
+        STATE.inPosition = false;
+        STATE.prevActivity = detectedActivity;
+    }
+
+    STATE.activity = detectedActivity;
+
+    if (STATE.activity === 'squat') {
+        const kneeAngle = (calculateAngle(landmarks[24], landmarks[26], landmarks[28]) +
+                           calculateAngle(landmarks[23], landmarks[25], landmarks[27])) / 2;
+
+        if (kneeAngle < 90) STATE.inPosition = true;
+        else if (STATE.inPosition && kneeAngle > 150) {
+            countRep();
+            STATE.inPosition = false;
+        }
+
+        feedbackDiv.innerHTML = `Squat Mode<br>Knee Angle: ${Math.round(kneeAngle)}°`;
+    } else if (STATE.activity === 'pushup') {
+        const elbowAngle = (calculateAngle(landmarks[11], landmarks[13], landmarks[15]) +
+                            calculateAngle(landmarks[12], landmarks[14], landmarks[16])) / 2;
+
+        if (elbowAngle < 80) STATE.inPosition = true;
+        else if (STATE.inPosition && elbowAngle > 160) {
+            countRep();
+            STATE.inPosition = false;
+        }
+
+        feedbackDiv.innerHTML = `Push-Up Mode<br>Elbow Angle: ${Math.round(elbowAngle)}°`;
+    } else {
+        feedbackDiv.innerHTML = "Stand ready...";
+    }
+
+    counterDiv.innerText = `Reps: ${STATE.repCount}`;
+}
+
+function drawLandmarks(landmarks) {
+    ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+    const connections = [
+        [11, 12], [11, 13], [13, 15], [12, 14], [14, 16],
+        [11, 23], [12, 24], [23, 25], [25, 27], [24, 26], [26, 28]
+    ];
+
+    connections.forEach(([a, b]) => {
+        const ptA = landmarks[a], ptB = landmarks[b];
+        ctx.beginPath();
+        ctx.moveTo(ptA.x * canvasElement.width, ptA.y * canvasElement.height);
+        ctx.lineTo(ptB.x * canvasElement.width, ptB.y * canvasElement.height);
+        ctx.strokeStyle = '#ff1e1e';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+    });
+
+    landmarks.forEach(lm => {
+        ctx.beginPath();
+        ctx.arc(lm.x * canvasElement.width, lm.y * canvasElement.height, 6, 0, 2 * Math.PI);
+        ctx.fillStyle = '#1eff1e';
+        ctx.fill();
+    });
+}
+
+function playFeedbackSound(message) {
+    const utterance = new SpeechSynthesisUtterance(message);
+    window.speechSynthesis.speak(utterance);
+}
+
+const pose = new Pose({locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+pose.setOptions({modelComplexity: 2, smoothLandmarks: true, minDetectionConfidence: 0.8, minTrackingConfidence: 0.8});
+pose.onResults(results => { if (results.poseLandmarks) { drawLandmarks(results.poseLandmarks); analyzePose(results.poseLandmarks); } });
+
+new Camera(videoElement, {onFrame: async () => await pose.send({image: videoElement}), width: 1280, height: 1280}).start();
+</script>
+
+</body>
+</html>

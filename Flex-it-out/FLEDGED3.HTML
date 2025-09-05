@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FLEX-IT-OUT - Real-Time Fitness Tracker</title>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #1a1a1a, #3d0000);
+      color: white;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    #auth-section, #profile-section, #app, #leaderboard-section, #challenges-section {
+      margin: 10px;
+      width: 90%;
+      max-width: 960px;
+    }
+    #auth-section, #profile-section {
+      text-align: center;
+    }
+    input, button {
+      padding: 8px;
+      margin: 5px;
+      font-size: 1rem;
+    }
+    #video-container {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      margin: 20px 0;
+    }
+    video, canvas {
+      border: 2px solid #ff1e1e;
+      border-radius: 10px;
+      width: 48%;
+      height: auto;
+    }
+    table {
+      margin: 10px auto;
+      border-collapse: collapse;
+      width: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      color: white;
+    }
+    table, th, td {
+      border: 1px solid #ff1e1e;
+    }
+    th, td {
+      padding: 8px;
+      text-align: center;
+    }
+    #feedback {
+      text-align: center;
+      margin: 5px;
+      padding: 10px;
+      background: rgba(0,0,0,0.6);
+      border-radius: 5px;
+      min-height: 80px;
+    }
+    #voice-status {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: rgba(0,255,0,0.2);
+      padding: 10px;
+      border-radius: 50%;
+      animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+      0% { transform: scale(0.95); }
+      50% { transform: scale(1.1); }
+      100% { transform: scale(0.95); }
+    }
+    #voice-commands {
+      position: fixed;
+      bottom: 80px;
+      right: 20px;
+      background: rgba(0,0,0,0.8);
+      padding: 15px;
+      border-radius: 10px;
+      max-width: 300px;
+    }
+  </style>
+</head>
+<body>
+  <div id="auth-section">
+    <h2>Login / Sign Up</h2>
+    <input type="email" id="email" placeholder="Email">
+    <input type="password" id="password" placeholder="Password">
+    <br>
+    <button id="loginBtn">Login</button>
+    <button id="signupBtn">Sign Up</button>
+  </div>
+
+  <div id="profile-section" style="display:none;">
+    <p>Welcome, <span id="user-email"></span>! <button id="logoutBtn">Logout</button></p>
+  </div>
+
+  <div id="app" style="display:none;">
+    <h1>💪 FLEX-IT-OUT - Real-Time Fitness Tracker</h1>
+    <div id="video-container">
+      <video id="video" width="480" height="640" autoplay playsinline></video>
+      <canvas id="canvas" width="480" height="640"></canvas>
+    </div>
+    <div id="feedback">Loading...</div>
+    <div id="voice-status">🎤</div>
+    <div id="voice-commands" style="display:none;">
+      <h3>Available Commands:</h3>
+      <ul>
+        <li>"Start [exercise]"</li>
+        <li>"Stop tracking"</li>
+        <li>"Reset counters"</li>
+        <li>"Show leaderboard"</li>
+        <li>"Open challenges"</li>
+        <li>"Help"</li>
+      </ul>
+    </div>
+    <table>
+      <tr><th>Exercise</th><th>Reps</th></tr>
+      <tr><td>Squats</td><td id="squatReps">0</td></tr>
+      <tr><td>Push-ups</td><td id="pushupReps">0</td></tr>
+      <tr><td>Plank</td><td id="plankStatus">Inactive</td></tr>
+      <tr><td>Arm Raises</td><td id="armRaiseReps">0</td></tr>
+      <tr><td>Bicep Curls</td><td id="bicepCurlReps">0</td></tr>
+      <tr><td>Jumping Jacks</td><td id="jumpingJackReps">0</td></tr>
+    </table>
+  </div>
+
+  <div id="leaderboard-section" style="display:none;">
+    <h2>Leaderboard</h2>
+    <table id="leaderboardTable">
+      <tr><th>User</th><th>Score</th></tr>
+    </table>
+  </div>
+
+  <div id="challenges-section" style="display:none;">
+    <h2>Challenges</h2>
+    <ul>
+      <li>Complete 100 Squats in a week</li>
+      <li>Achieve 50 Push-ups in a session</li>
+      <li>Perform 30 Arm Raises in one go</li>
+      <li>Score top on the leaderboard!</li>
+      <li>Do 20 Jumping Jacks in a session</li>
+    </ul>
+  </div>
+
+<script>
+  // Firebase Configuration (same as before)
+  const firebaseConfig = {
+    apiKey: "AIzaSyAC9_7JYVxliRtlH7uz2fJz_lzms1AU0PQ",
+    authDomain: "flex-it-out-2948e.firebaseapp.com",
+    projectId: "flex-it-out-2948e",
+    storageBucket: "flex-it-out-2948e.firebasestorage.app",
+    messagingSenderId: "854403347852",
+    appId: "1:854403347852:web:748656ef30b4bd3ca612a9",
+    measurementId: "G-6HKXK6M0DB"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+
+  // Voice Recognition Setup
+  const VoiceCommands = {
+    currentExercise: null,
+    recognition: null,
+    
+    init() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        this.recognition = new SpeechRecognition();
+        this.recognition.continuous = true;
+        this.recognition.interimResults = true;
+        this.recognition.lang = 'en-US';
+
+        this.recognition.onresult = (event) => {
+          const transcript = event.results[event.results.length-1][0].transcript.toLowerCase();
+          this.processCommand(transcript);
+        };
+
+        this.recognition.start();
+        this.recognition.onerror = (event) => {
+          console.log('Error occurred in recognition: ' + event.error);
+        };
+      }
+    },
+
+    processCommand(transcript) {
+      const commands = {
+        'start': (exercise) => this.startExercise(exercise),
+        'stop': () => this.stopExercise(),
+        'reset': () => this.resetCounters(),
+        'show': (section) => this.showSection(section),
+        'help': () => this.toggleHelp()
+      };
+
+      const commandPatterns = [
+        { regex: /start (squats|pushups|arm raises|bicep curls|jumping jacks|plank)/, action: (match) => commands.start(match[1]) },
+        { regex: /stop tracking/, action: () => commands.stop() },
+        { regex: /reset (counters|all)/, action: () => commands.reset() },
+        { regex: /show (leaderboard|challenges|profile)/, action: (match) => commands.show(match[1]) },
+        { regex: /open (leaderboard|challenges)/, action: (match) => commands.show(match[1]) },
+        { regex: /help/, action: () => commands.help() }
+      ];
+
+      for (const pattern of commandPatterns) {
+        const match = transcript.match(pattern.regex);
+        if (match) {
+          pattern.action(match);
+          this.showFeedback(`Command recognized: ${transcript}`);
+          break;
+        }
+      }
+    },
+
+    startExercise(exercise) {
+      this.currentExercise = exercise.replace(' ', '-');
+      document.getElementById('feedback').innerHTML = 
+        `Starting ${exercise} tracking<br>Say "Stop tracking" to end`;
+      STATE.currentMode = exercise.toLowerCase();
+    },
+
+    stopExercise() {
+      this.currentExercise = null;
+      document.getElementById('feedback').innerHTML = 
+        "Tracking stopped<br>Say an exercise name to start";
+      STATE.currentMode = null;
+    },
+
+    resetCounters() {
+      Object.keys(STATE).forEach(key => {
+        if (key.includes('Reps')) STATE[key] = 0;
+      });
+      updateReps();
+      this.showFeedback("All counters reset!");
+    },
+
+    showSection(section) {
+      const sections = {
+        'leaderboard': leaderboardSection,
+        'challenges': challengesSection,
+        'profile': profileSection
+      };
+      Object.values(sections).forEach(s => s.style.display = 'none');
+      sections[section].style.display = 'block';
+    },
+
+    toggleHelp() {
+      const helpDiv = document.getElementById('voice-commands');
+      helpDiv.style.display = helpDiv.style.display === 'none' ? 'block' : 'none';
+    },
+
+    showFeedback(text) {
+      const feedback = document.getElementById('feedback');
+      feedback.innerHTML = text;
+      feedback.style.color = '#00ff00';
+      setTimeout(() => feedback.style.color = 'white', 2000);
+    }
+  };
+
+  // Modified STATE object
+  const STATE = {
+    currentMode: null,
+    squatReps: 0,
+    pushupReps: 0,
+    armRaiseReps: 0,
+    bicepCurlReps: 0,
+    jumpingJackReps: 0,
+    plankActive: false,
+    // ... (rest of the previous state properties)
+  };
+
+  // Initialize voice commands when app starts
+  document.addEventListener('DOMContentLoaded', () => {
+    if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
+      VoiceCommands.init();
+    } else {
+      document.getElementById('voice-status').style.display = 'none';
+    }
+  });
+
+  // Modified processPose function to work with voice commands
+  function processPose(landmarks) {
+    if (!VoiceCommands.currentExercise) return;
+
+    switch(VoiceCommands.currentExercise) {
+      case 'squats':
+        handleSquatMode(landmarks);
+        break;
+      case 'pushups':
+        handlePushupMode(landmarks);
+        break;
+      case 'arm-raises':
+        handleArmRaise(landmarks);
+        break;
+      case 'bicep-curls':
+        handleBicepCurl(landmarks);
+        break;
+      case 'jumping-jacks':
+        handleJumpingJacks(landmarks);
+        break;
+      case 'plank':
+        checkPlankMode(landmarks);
+        break;
+    }
+  }
+
+  // Rest of the previous JavaScript code (pose detection, firebase, etc.)
+  // ... [Include all the previous JavaScript code here] ...
+
+  // Add voice command awareness to existing functions
+  const originalUpdateReps = updateReps;
+  updateReps = function() {
+    originalUpdateReps();
+    if (VoiceCommands.currentExercise) {
+      document.getElementById('feedback').innerHTML = 
+        `Tracking ${VoiceCommands.currentExercise.replace('-', ' ')}<br>
+        Current count: ${STATE[`${VoiceCommands.currentExercise}Reps`]}`;
+    }
+  };
+
+</script>
+</body>
+</html>

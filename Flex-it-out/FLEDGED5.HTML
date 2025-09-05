@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FLEX-IT-OUT - Real-Time Fitness Tracker</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: Arial, sans-serif;
+        background: linear-gradient(135deg, #1a1a1a, #3d0000);
+        color: white;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-height: 100vh;
+      }
+      #auth-section, #profile-section, #app, #leaderboard-section, #challenges-section, #voice-controls {
+        margin: 10px;
+        width: 90%;
+        max-width: 960px;
+      }
+      #auth-section, #profile-section, #voice-controls {
+        text-align: center;
+      }
+      input, button {
+        padding: 8px;
+        margin: 5px;
+        font-size: 1rem;
+      }
+      video, canvas {
+        border: 2px solid #ff1e1e;
+        border-radius: 10px;
+        display: block;
+        margin: auto;
+      }
+      table {
+        margin: 10px auto;
+        border-collapse: collapse;
+        width: 100%;
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+      }
+      table, th, td {
+        border: 1px solid #ff1e1e;
+      }
+      th, td {
+        padding: 8px;
+        text-align: center;
+      }
+      #feedback {
+        text-align: center;
+        margin: 5px;
+      }
+      #leaderboard-section, #challenges-section {
+        background: rgba(0,0,0,0.6);
+        padding: 10px;
+        border-radius: 10px;
+      }
+      #voice-status {
+        color: #00ff00;
+        font-weight: bold;
+      }
+    </style>
+</head>
+<body>
+    <div id="auth-section">
+        <h2>Login / Sign Up</h2>
+        <input type="email" id="email" placeholder="Email">
+        <input type="password" id="password" placeholder="Password">
+        <br>
+        <button id="loginBtn">Login</button>
+        <button id="signupBtn">Sign Up</button>
+      </div>
+    
+      <div id="profile-section" style="display:none;">
+        <p>Welcome, <span id="user-email"></span>! <button id="logoutBtn">Logout</button></p>
+      </div>
+    
+      <div id="voice-controls" style="display:none;">
+        <button id="startVoice">Start Voice Commands</button>
+        <p id="voice-status">Voice: Off</p>
+      </div>
+    
+      <div id="app" style="display:none;">
+        <h1>💪 FLEX-IT-OUT - Real-Time Fitness Tracker</h1>
+        <video id="video" width="960" height="720" autoplay playsinline></video>
+        <canvas id="canvas" width="960" height="720"></canvas>
+        <div id="feedback">Loading...</div>
+        <table>
+          <tr><th>Exercise</th><th>Reps</th></tr>
+          <tr><td>Squats</td><td id="squatReps">0</td></tr>
+          <tr><td>Push-ups</td><td id="pushupReps">0</td></tr>
+          <tr><td>Plank</td><td id="plankStatus">Inactive</td></tr>
+          <tr><td>Arm Raises</td><td id="armRaiseReps">0</td></tr>
+          <tr><td>Bicep Curls</td><td id="bicepCurlReps">0</td></tr>
+          <tr><td>Jumping Jacks</td><td id="jumpingJackReps">0</td></tr>
+        </table>
+      </div>
+    
+      <div id="leaderboard-section" style="display:none;">
+        <h2>Leaderboard</h2>
+        <table id="leaderboardTable">
+          <tr><th>User</th><th>Score</th></tr>
+        </table>
+      </div>
+    
+      <div id="challenges-section" style="display:none;">
+        <h2>Challenges</h2>
+        <ul>
+          <li>Complete 100 Squats in a week</li>
+          <li>Achieve 50 Push-ups in a session</li>
+          <li>Perform 30 Arm Raises in one go</li>
+          <li>Score top on the leaderboard!</li>
+          <li>Do 20 Jumping Jacks in a session</li>
+        </ul>
+      </div>
+    
+
+<script>
+  var firebaseConfig = {
+    apiKey: "AIzaSyAC9_7JYVxliRtlH7uz2fJz_lzms1AU0PQ",
+    authDomain: "flex-it-out-2948e.firebaseapp.com",
+    projectId: "flex-it-out-2948e",
+    storageBucket: "flex-it-out-2948e.firebasestorage.app",
+    messagingSenderId: "854403347852",
+    appId: "1:854403347852:web:748656ef30b4bd3ca612a9",
+    measurementId: "G-6HKXK6M0DB"
+  };
+// Authentication and UI elements
+const authSection = document.getElementById('auth-section');
+  const profileSection = document.getElementById('profile-section');
+  const appSection = document.getElementById('app');
+  const leaderboardSection = document.getElementById('leaderboard-section');
+  const challengesSection = document.getElementById('challenges-section');
+  const emailInput = document.getElementById('email');
+  const passwordInput = document.getElementById('password');
+  const loginBtn = document.getElementById('loginBtn');
+  const signupBtn = document.getElementById('signupBtn');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const userEmailSpan = document.getElementById('user-email');
+
+  firebase.initializeApp(firebaseConfig);
+
+  // Add missing pose detection functions
+  function drawLandmarks(landmarks) {
+    ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    ctx.shadowColor = "rgba(0, 255, 0, 0.8)";
+    ctx.shadowBlur = 8;
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#1e90ff';
+    // Pose detection elements
+  const videoElement = document.getElementById('video');
+  const canvasElement = document.getElementById('canvas');
+  const ctx = canvasElement.getContext('2d');
+    
+    // Draw connections
+    const connections = [
+      [11,12], [11,13], [13,15], [12,14], [14,16],
+      [11,23], [12,24], [23,25], [25,27], [24,26], [26,28]
+    ];
+    
+    connections.forEach(([a, b]) => {
+      const ptA = landmarks[a];
+      const ptB = landmarks[b];
+      if (ptA && ptB) {
+        ctx.beginPath();
+        ctx.moveTo(ptA.x * canvasElement.width, ptA.y * canvasElement.height);
+        ctx.lineTo(ptB.x * canvasElement.width, ptB.y * canvasElement.height);
+        ctx.stroke();
+      }
+    });
+
+    // Draw landmarks
+    ctx.fillStyle = 'green';
+    landmarks.forEach(landmark => {
+      ctx.beginPath();
+      ctx.arc(landmark.x * canvasElement.width, 
+              landmark.y * canvasElement.height, 
+              6, 0, 2 * Math.PI);
+      ctx.fill();
+    });
+  }
+
+  // Add missing exercise handlers
+  function handleSquatMode(landmarks) {
+    const leftHip = landmarks[23], leftKnee = landmarks[25], leftAnkle = landmarks[27];
+    const rightHip = landmarks[24], rightKnee = landmarks[26], rightAnkle = landmarks[28];
+    
+    const leftAngle = calculateAngle(leftHip, leftKnee, leftAnkle);
+    const rightAngle = calculateAngle(rightHip, rightKnee, rightAnkle);
+    const avgAngle = (leftAngle + rightAngle) / 2;
+
+    if (avgAngle < 90) {
+      STATE.inPosition = true;
+    } else if (STATE.inPosition && avgAngle > 150) {
+      STATE.squatReps++;
+      STATE.inPosition = false;
+      updateReps();
+    }
+    document.getElementById('feedback').innerText = `Squats\nKnee Angle: ${Math.round(avgAngle)}°`;
+  }
+
+  function handlePushupMode(landmarks) {
+    const leftElbowAngle = calculateAngle(landmarks[11], landmarks[13], landmarks[15]);
+    const rightElbowAngle = calculateAngle(landmarks[12], landmarks[14], landmarks[16]);
+    const avgAngle = (leftElbowAngle + rightElbowAngle) / 2;
+
+    if (avgAngle < 80) {
+      STATE.inPosition = true;
+    } else if (STATE.inPosition && avgAngle > 150) {
+      STATE.pushupReps++;
+      STATE.inPosition = false;
+      updateReps();
+    }
+    document.getElementById('feedback').innerText = `Push-ups\nElbow Angle: ${Math.round(avgAngle)}°`;
+  }
+
+  // Add missing Firebase functions
+  function updateUserScore() {
+    const user = firebase.auth().currentUser;
+    if (user) {
+      const total = STATE.squatReps + STATE.pushupReps + STATE.jumpingJackReps;
+      firebase.database().ref('scores/' + user.uid).set({
+        email: user.email,
+        score: total
+      });
+    }
+  }
+
+  function loadLeaderboard() {
+    firebase.database().ref('scores').orderByChild('score').limitToLast(10).on('value', snapshot => {
+      const leaderboardTable = document.getElementById('leaderboardTable');
+      leaderboardTable.innerHTML = '<tr><th>User</th><th>Score</th></tr>';
+      
+      const scores = [];
+      snapshot.forEach(child => {
+        scores.push(child.val());
+      });
+
+      scores.sort((a, b) => b.score - a.score);
+      scores.forEach(entry => {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${entry.email}</td><td>${entry.score}</td>`;
+        leaderboardTable.appendChild(row);
+      });
+    });
+  }
+
+  // Initialize MediaPipe Pose
+  const pose = new Pose({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+  });
+
+  pose.setOptions({
+    modelComplexity: 1,
+    smoothLandmarks: true,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+  });
+
+  pose.onResults((results) => {
+    if (results.poseLandmarks) {
+      drawLandmarks(results.poseLandmarks);
+      processPose(results.poseLandmarks);
+    }
+  });
+
+  // Initialize camera properly
+  const camera = new Camera(videoElement, {
+    onFrame: async () => {
+      await pose.send({image: videoElement});
+    },
+    width: 960,
+    height: 720
+  });
+  camera.start();
+
+  // Error handling
+  pose.onError = (error) => {
+    console.error('Pose Detection Error:', error);
+    document.getElementById('feedback').innerText = "Camera Error - Please allow camera access";
+  };
+</script>
+</body>
+</html>

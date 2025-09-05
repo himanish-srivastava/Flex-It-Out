@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>FLEX-IT-OUT - Real-Time Fitness Tracker</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #1a1a1a, #3d0000);
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #app {
+            text-align: center;
+        }
+        video, canvas {
+            border: 2px solid #ff1e1e;
+            border-radius: 10px;
+        }
+        table {
+            margin-top: 10px;
+            border-collapse: collapse;
+            width: 200px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+        }
+        table, th, td {
+            border: 1px solid #ff1e1e;
+        }
+        th, td {
+            padding: 8px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<div id="app">
+    <h1>💪 FLEX-IT-OUT - Real-Time Fitness Tracker</h1>
+    <video id="video" width="960" height="720" autoplay playsinline></video>
+    <canvas id="canvas" width="960" height="720"></canvas>
+    <div id="feedback">Loading...</div>
+    <table>
+        <tr><th>Exercise</th><th>Reps</th></tr>
+        <tr><td>Squats</td><td id="squatReps">0</td></tr>
+        <tr><td>Push-ups</td><td id="pushupReps">0</td></tr>
+    </table>
+</div>
+
+<script>
+const STATE = {
+    mode: 'squat',  // Default
+    squatReps: 0,
+    pushupReps: 0,
+    inPosition: false
+};
+
+const videoElement = document.getElementById('video');
+const canvasElement = document.getElementById('canvas');
+const ctx = canvasElement.getContext('2d');
+
+function calculateAngle(a, b, c) {
+    const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+    let angle = Math.abs(radians * 180 / Math.PI);
+    if (angle > 180) angle = 360 - angle;
+    return angle;
+}
+
+function detectBodyOrientation(landmarks) {
+    const leftShoulder = landmarks[11], rightShoulder = landmarks[12];
+    const leftHip = landmarks[23], rightHip = landmarks[24];
+
+    const avgShoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+    const avgHipY = (leftHip.y + rightHip.y) / 2;
+
+    // If shoulders are much higher than hips = standing (squat mode)
+    if (avgShoulderY < avgHipY - 0.15) {
+        return 'squat';
+    }
+    // If shoulders and hips are nearly at same level = push-up mode
+    else {
+        return 'pushup';
+    }
+}
+
+function handleSquatMode(landmarks) {
+    const leftHip = landmarks[23], leftKnee = landmarks[25], leftAnkle = landmarks[27];
+    const rightHip = landmarks[24], rightKnee = landmarks[26], rightAnkle = landmarks[28];
+
+    const kneeAngleLeft = calculateAngle(leftHip, leftKnee, leftAnkle);
+    const kneeAngleRight = calculateAngle(rightHip, rightKnee, rightAnkle);
+
+    const avgKneeAngle = (kneeAngleLeft + kneeAngleRight) / 2;
+
+    if (avgKneeAngle < 90) {
+        STATE.inPosition = true;
+    } else if (STATE.inPosition && avgKneeAngle > 150) {
+        STATE.squatReps++;
+        STATE.inPosition = false;
+        updateReps();
+    }
+    document.getElementById('feedback').innerText = `Squat Mode\nKnee Angle: ${Math.round(avgKneeAngle)}°`;
+}
+
+function handlePushupMode(landmarks) {
+    const leftShoulder = landmarks[11], leftElbow = landmarks[13], leftWrist = landmarks[15];
+    const rightShoulder = landmarks[12], rightElbow = landmarks[14], rightWrist = landmarks[16];
+
+    const elbowAngleLeft = calculateAngle(leftShoulder, leftElbow, leftWrist);
+    const elbowAngleRight = calculateAngle(rightShoulder, rightElbow, rightWrist);
+
+    const avgElbowAngle = (elbowAngleLeft + elbowAngleRight) / 2;
+
+    if (avgElbowAngle < 80) {
+        STATE.inPosition = true;
+    } else if (STATE.inPosition && avgElbowAngle > 150) {
+        STATE.pushupReps++;
+        STATE.inPosition = false;
+        updateReps();
+    }
+    document.getElementById('feedback').innerText = `Push-up Mode\nElbow Angle: ${Math.round(avgElbowAngle)}°`;
+}
+
+function updateReps() {
+    document.getElementById('squatReps').innerText = STATE.squatReps;
+    document.getElementById('pushupReps').innerText = STATE.pushupReps;
+}
+
+function drawLandmarks(landmarks) {
+    ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+    const connections = [
+        [11, 12], [11, 13], [13, 15], [12, 14], [14, 16],
+        [11, 23], [12, 24], [23, 25], [25, 27], [24, 26], [26, 28]
+    ];
+
+    connections.forEach(([a, b]) => {
+        const ptA = landmarks[a], ptB = landmarks[b];
+        ctx.beginPath();
+        ctx.moveTo(ptA.x * canvasElement.width, ptA.y * canvasElement.height);
+        ctx.lineTo(ptB.x * canvasElement.width, ptB.y * canvasElement.height);
+        ctx.strokeStyle = '#ff1e1e';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+    });
+
+    landmarks.forEach(lm => {
+        ctx.beginPath();
+        ctx.arc(lm.x * canvasElement.width, lm.y * canvasElement.height, 5, 0, 2 * Math.PI);
+        ctx.fillStyle = '#1eff1e';
+        ctx.fill();
+    });
+}
+
+function processPose(landmarks) {
+    const currentMode = detectBodyOrientation(landmarks);
+    STATE.mode = currentMode;
+
+    if (currentMode === 'squat') {
+        handleSquatMode(landmarks);
+    } else {
+        handlePushupMode(landmarks);
+    }
+}
+
+const pose = new Pose({locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+pose.setOptions({modelComplexity: 2, smoothLandmarks: true, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7});
+pose.onResults(results => {
+    if (results.poseLandmarks) {
+        drawLandmarks(results.poseLandmarks);
+        processPose(results.poseLandmarks);
+    }
+});
+
+const camera = new Camera(videoElement, {
+    onFrame: async () => await pose.send({image: videoElement}),
+    width: 960,
+    height: 720
+});
+camera.start();
+</script>
+
+</body>
+</html>
+

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Real-Time Activity Recognition</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+</head>
+<body>
+    <video id="video" width="640" height="480" autoplay></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
+    <div id="feedback" style="position: absolute; top: 10px; left: 10px; color: white; background: rgba(0,0,0,0.5); padding: 10px;"></div>
+
+<script>
+const VIDEO_CONFIG = { 
+    facingMode: 'user', 
+    width: 640,
+    height: 480 
+};
+
+const STATE = {
+    model: null,
+    activity: 'squat', // Example activity
+    referenceAngles: {
+        squat: { knee: 90, hip: 145 }
+    }
+};
+
+async function setupCamera() {
+    const video = document.getElementById('video');
+    const stream = await navigator.mediaDevices.getUserMedia({ video: VIDEO_CONFIG });
+    video.srcObject = stream;
+    return new Promise((resolve) => {
+        video.onloadedmetadata = () => {
+            video.play();
+            resolve(video);
+        };
+    });
+}
+
+async function loadModel() {
+    const detectorConfig = {
+        modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER,
+        enableSmoothing: true,
+        minPoseScore: 0.3
+    };
+    STATE.model = await poseDetection.createDetector(
+        poseDetection.SupportedModels.MoveNet,
+        detectorConfig
+    );
+}
+
+function calculateAngle(a, b, c) {
+    const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+    let angle = Math.abs(radians * 180 / Math.PI);
+    return angle > 180 ? 360 - angle : angle;
+}
+
+async function detectPose() {
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const feedbackDiv = document.getElementById('feedback');
+    
+    ctx.drawImage(video, 0, 0, 640, 480);
+    
+    const poses = await STATE.model.estimatePoses(video);
+    if (poses.length > 0) {
+        const keypoints = poses[0].keypoints;
+        
+        // Draw skeleton
+        drawKeypoints(keypoints, ctx);
+        drawSkeleton(keypoints, ctx);
+        
+        // Analyze pose
+        const feedback = analyzePose(keypoints);
+        feedbackDiv.innerHTML = feedback;
+    }
+    
+    requestAnimationFrame(detectPose);
+}
+
+function analyzePose(keypoints) {
+    const feedback = [];
+    const keypointsMap = {};
+    
+    keypoints.forEach((kp) => {
+        keypointsMap[kp.name] = { x: kp.x, y: kp.y, score: kp.score };
+    });
+
+    // Example: Squat analysis
+    if (STATE.activity === 'squat') {
+        const leftKneeAngle = calculateAngle(
+            keypointsMap['left_hip'],
+            keypointsMap['left_knee'],
+            keypointsMap['left_ankle']
+        );
+
+        const rightKneeAngle = calculateAngle(
+            keypointsMap['right_hip'],
+            keypointsMap['right_knee'],
+            keypointsMap['right_ankle']
+        );
+
+        const avgKneeAngle = (leftKneeAngle + rightKneeAngle) / 2;
+
+        if (avgKneeAngle > STATE.referenceAngles.squat.knee + 15) {
+            feedback.push("Go deeper in your squat");
+        } else if (avgKneeAngle < STATE.referenceAngles.squat.knee - 15) {
+            feedback.push("Don't squat too deep");
+        }
+
+        // Add more form checks here...
+    }
+
+    return feedback.join('<br>') || "Good form!";
+}
+
+// Utility functions for drawing
+function drawKeypoints(keypoints, ctx) {
+    keypoints.forEach(({ x, y, score }) => {
+        if (score > 0.3) {
+            ctx.beginPath();
+            ctx.arc(x, y, 5, 0, 2 * Math.PI);
+            ctx.fillStyle = 'red';
+            ctx.fill();
+        }
+    });
+}
+
+function drawSkeleton(keypoints, ctx) {
+    const connectedParts = [
+        ['left_shoulder', 'right_shoulder'], // Add all skeleton connections
+        // Add more connections as needed
+    ];
+
+    connectedParts.forEach(([partA, partB]) => {
+        const kpA = keypoints.find(kp => kp.name === partA);
+        const kpB = keypoints.find(kp => kp.name === partB);
+        
+        if (kpA.score > 0.3 && kpB.score > 0.3) {
+            ctx.beginPath();
+            ctx.moveTo(kpA.x, kpA.y);
+            ctx.lineTo(kpB.x, kpB.y);
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+    });
+}
+
+(async function main() {
+    await setupCamera();
+    await loadModel();
+    detectPose();
+})();
+</script>
+</body>
+</html>

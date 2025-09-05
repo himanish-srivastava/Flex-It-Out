@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>FLEX-IT-OUT - Real-Time Fitness Tracker</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #1a1a1a, #3d0000);
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #app {
+            text-align: center;
+        }
+        video, canvas {
+            border: 2px solid #ff1e1e;
+            border-radius: 10px;
+        }
+        table {
+            margin-top: 10px;
+            border-collapse: collapse;
+            width: 250px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+        }
+        table, th, td {
+            border: 1px solid #ff1e1e;
+        }
+        th, td {
+            padding: 8px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<div id="app">
+    <h1>💪 FLEX-IT-OUT - Real-Time Fitness Tracker</h1>
+    <video id="video" width="960" height="720" autoplay playsinline></video>
+    <canvas id="canvas" width="960" height="720"></canvas>
+    <div id="feedback">Loading...</div>
+    <table>
+        <tr><th>Exercise</th><th>Reps</th></tr>
+        <tr><td>Squats</td><td id="squatReps">0</td></tr>
+        <tr><td>Push-ups</td><td id="pushupReps">0</td></tr>
+        <tr><td>Plank</td><td id="plankStatus">Inactive</td></tr>
+    </table>
+</div>
+
+<script>
+const STATE = {
+    mode: 'squat',
+    squatReps: 0,
+    pushupReps: 0,
+    plankActive: false,
+    inPosition: false
+};
+
+// Add smoothing for landmarks
+let smoothedLandmarks = [];
+
+function smoothLandmarks(newLandmarks, alpha = 0.6) {
+    if (smoothedLandmarks.length === 0) {
+        smoothedLandmarks = newLandmarks.map(lm => ({ x: lm.x, y: lm.y }));
+    } else {
+        smoothedLandmarks = smoothedLandmarks.map((lm, i) => ({
+            x: alpha * newLandmarks[i].x + (1 - alpha) * lm.x,
+            y: alpha * newLandmarks[i].y + (1 - alpha) * lm.y
+        }));
+    }
+    return smoothedLandmarks;
+}
+
+const videoElement = document.getElementById('video');
+const canvasElement = document.getElementById('canvas');
+const ctx = canvasElement.getContext('2d');
+
+function calculateAngle(a, b, c) {
+    const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+    let angle = Math.abs(radians * 180 / Math.PI);
+    if (angle > 180) angle = 360 - angle;
+    return angle;
+}
+
+function detectBodyOrientation(landmarks) {
+    const leftShoulder = landmarks[11], rightShoulder = landmarks[12];
+    const leftHip = landmarks[23], rightHip = landmarks[24];
+    const avgShoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+    const avgHipY = (leftHip.y + rightHip.y) / 2;
+
+    return avgShoulderY < avgHipY - 0.1 ? 'squat' : 'horizontal';
+}
+
+function handleSquatMode(landmarks) {
+    const kneeAngle = calculateKneeAngle(landmarks);
+    if (kneeAngle < 90) {
+        STATE.inPosition = true;
+    } else if (STATE.inPosition && kneeAngle > 150) {
+        STATE.squatReps++;
+        STATE.inPosition = false;
+        updateReps();
+    }
+    document.getElementById('feedback').innerText = `Squat Mode\nKnee Angle: ${Math.round(kneeAngle)}°`;
+}
+
+function calculateKneeAngle(landmarks) {
+    const leftHip = landmarks[23], leftKnee = landmarks[25], leftAnkle = landmarks[27];
+    const rightHip = landmarks[24], rightKnee = landmarks[26], rightAnkle = landmarks[28];
+    const angleLeft = calculateAngle(leftHip, leftKnee, leftAnkle);
+    const angleRight = calculateAngle(rightHip, rightKnee, rightAnkle);
+    return (angleLeft + angleRight) / 2;
+}
+
+function handlePushupMode(landmarks) {
+    const elbowAngle = calculateElbowAngle(landmarks);
+    if (elbowAngle < 85) {
+        STATE.inPosition = true;
+    } else if (STATE.inPosition && elbowAngle > 150) {
+        STATE.pushupReps++;
+        STATE.inPosition = false;
+        updateReps();
+    }
+    document.getElementById('feedback').innerText = `Push-up Mode\nElbow Angle: ${Math.round(elbowAngle)}°`;
+}
+
+function calculateElbowAngle(landmarks) {
+    const leftShoulder = landmarks[11], leftElbow = landmarks[13], leftWrist = landmarks[15];
+    const rightShoulder = landmarks[12], rightElbow = landmarks[14], rightWrist = landmarks[16];
+    const angleLeft = calculateAngle(leftShoulder, leftElbow, leftWrist);
+    const angleRight = calculateAngle(rightShoulder, rightElbow, rightWrist);
+    return (angleLeft + angleRight) / 2;
+}
+
+function checkPlankMode(landmarks) {
+    const elbowAngle = calculateElbowAngle(landmarks);
+    if (elbowAngle >= 85 && elbowAngle <= 105) {
+        STATE.plankActive = true;
+        document.getElementById('plankStatus').innerText = 'Active';
+    } else {
+        STATE.plankActive = false;
+        document.getElementById('plankStatus').innerText = 'Inactive';
+    }
+}
+
+function updateReps() {
+    document.getElementById('squatReps').innerText = STATE.squatReps;
+    document.getElementById('pushupReps').innerText = STATE.pushupReps;
+}
+
+function drawLandmarks(landmarks) {
+    ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    landmarks.forEach(lm => {
+        ctx.beginPath();
+        ctx.arc(lm.x * canvasElement.width, lm.y * canvasElement.height, 5, 0, 2 * Math.PI);
+        ctx.fillStyle = '#1eff1e';
+        ctx.fill();
+    });
+}
+
+const pose = new Pose({locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+pose.setOptions({
+    modelComplexity: 2,
+    smoothLandmarks: true,
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.7
+});
+
+pose.onResults(results => {
+    if (results.poseLandmarks) {
+        const smoothed = smoothLandmarks(results.poseLandmarks);
+        drawLandmarks(smoothed);
+        processPose(smoothed);
+    }
+});
+
+function processPose(landmarks) {
+    const mode = detectBodyOrientation(landmarks);
+    if (mode === 'squat') {
+        handleSquatMode(landmarks);
+    } else {
+        handlePushupMode(landmarks);
+        checkPlankMode(landmarks);
+    }
+}
+
+new Camera(videoElement, {
+    onFrame: async () => pose.send({image: videoElement}),
+    width: 960,
+    height: 720
+}).start();
+</script>
+</body>
+</html>

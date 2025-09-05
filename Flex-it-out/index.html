@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FLEX-IT-OUT - Real-Time Fitness Tracker</title>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #1a1a1a, #3d0000);
+      color: white;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    #auth-section, #profile-section, #app, #leaderboard-section, #challenges-section {
+      margin: 10px;
+      width: 90%;
+      max-width: 960px;
+    }
+    #auth-section, #profile-section {
+      text-align: center;
+    }
+    input, button {
+      padding: 8px;
+      margin: 5px;
+      font-size: 1rem;
+    }
+    video, canvas {
+      border: 2px solid #ff1e1e;
+      border-radius: 10px;
+      display: block;
+      margin: auto;
+    }
+    table {
+      margin: 10px auto;
+      border-collapse: collapse;
+      width: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      color: white;
+    }
+    table, th, td {
+      border: 1px solid #ff1e1e;
+    }
+    th, td {
+      padding: 8px;
+      text-align: center;
+    }
+    #feedback {
+      text-align: center;
+      margin: 5px;
+    }
+    #leaderboard-section, #challenges-section {
+      background: rgba(0,0,0,0.6);
+      padding: 10px;
+      border-radius: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div id="auth-section">
+    <h2>Login / Sign Up</h2>
+    <input type="email" id="email" placeholder="Email">
+    <input type="password" id="password" placeholder="Password">
+    <br>
+    <button id="loginBtn">Login</button>
+    <button id="signupBtn">Sign Up</button>
+  </div>
+
+  <div id="profile-section" style="display:none;">
+    <p>Welcome, <span id="user-email"></span>! <button id="logoutBtn">Logout</button></p>
+  </div>
+
+  <div id="app" style="display:none;">
+    <h1>💪 FLEX-IT-OUT - Real-Time Fitness Tracker</h1>
+    <video id="video" width="960" height="720" autoplay playsinline></video>
+    <canvas id="canvas" width="960" height="720"></canvas>
+    <div id="feedback">Loading...</div>
+    <table>
+      <tr><th>Exercise</th><th>Reps</th></tr>
+      <tr><td>Squats</td><td id="squatReps">0</td></tr>
+      <tr><td>Push-ups</td><td id="pushupReps">0</td></tr>
+      <tr><td>Plank</td><td id="plankStatus">Inactive</td></tr>
+      <tr><td>Arm Raises</td><td id="armRaiseReps">0</td></tr>
+      <tr><td>Bicep Curls</td><td id="bicepCurlReps">0</td></tr>
+      <tr><td>Jumping Jacks</td><td id="jumpingJackReps">0</td></tr>
+    </table>
+  </div>
+
+  <div id="leaderboard-section" style="display:none;">
+    <h2>Leaderboard</h2>
+    <table id="leaderboardTable">
+      <tr><th>User</th><th>Score</th></tr>
+    </table>
+  </div>
+
+  <div id="challenges-section" style="display:none;">
+    <h2>Challenges</h2>
+    <ul>
+      <li>Complete 100 Squats in a week</li>
+      <li>Achieve 50 Push-ups in a session</li>
+      <li>Perform 30 Arm Raises in one go</li>
+      <li>Score top on the leaderboard!</li>
+      <li>Do 20 Jumping Jacks in a session</li>
+    </ul>
+  </div>
+
+<script>
+  var firebaseConfig = {
+    apiKey: "AIzaSyAC9_7JYVxliRtlH7uz2fJz_lzms1AU0PQ",
+    authDomain: "flex-it-out-2948e.firebaseapp.com",
+    projectId: "flex-it-out-2948e",
+    storageBucket: "flex-it-out-2948e.firebasestorage.app",
+    messagingSenderId: "854403347852",
+    appId: "1:854403347852:web:748656ef30b4bd3ca612a9",
+    measurementId: "G-6HKXK6M0DB"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+
+  const authSection = document.getElementById('auth-section');
+  const profileSection = document.getElementById('profile-section');
+  const appSection = document.getElementById('app');
+  const leaderboardSection = document.getElementById('leaderboard-section');
+  const challengesSection = document.getElementById('challenges-section');
+  const emailInput = document.getElementById('email');
+  const passwordInput = document.getElementById('password');
+  const loginBtn = document.getElementById('loginBtn');
+  const signupBtn = document.getElementById('signupBtn');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const userEmailSpan = document.getElementById('user-email');
+
+  loginBtn.addEventListener('click', () => {
+    firebase.auth().signInWithEmailAndPassword(emailInput.value, passwordInput.value)
+      .catch(error => alert(error.message));
+  });
+  signupBtn.addEventListener('click', () => {
+    firebase.auth().createUserWithEmailAndPassword(emailInput.value, passwordInput.value)
+      .then((userCredential) => {
+        alert("Sign-up successful: " + userCredential.user.email);
+      })
+      .catch(error => alert(error.message));
+  });
+  logoutBtn.addEventListener('click', () => {
+    firebase.auth().signOut();
+  });
+
+  firebase.auth().onAuthStateChanged(user => {
+    if (user) {
+      userEmailSpan.innerText = user.email;
+      authSection.style.display = 'none';
+      profileSection.style.display = 'block';
+      appSection.style.display = 'block';
+      leaderboardSection.style.display = 'block';
+      challengesSection.style.display = 'block';
+      loadLeaderboard();
+    } else {
+      authSection.style.display = 'block';
+      profileSection.style.display = 'none';
+      appSection.style.display = 'none';
+      leaderboardSection.style.display = 'none';
+      challengesSection.style.display = 'none';
+    }
+  });
+
+
+  const STATE = {
+    squatReps: 0,
+    pushupReps: 0,
+    armRaiseReps: 0,
+    bicepCurlReps: 0,
+    jumpingJackReps: 0,
+    plankActive: false,
+    inPosition: false,
+    armRaised: false,
+    bicepCurlInPosition: false,
+    jumpingJackInPosition: false
+  };
+
+  const videoElement = document.getElementById('video');
+  const canvasElement = document.getElementById('canvas');
+  const ctx = canvasElement.getContext('2d');
+
+  function calculateAngle(a, b, c) {
+    const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+    let angle = Math.abs(radians * 180 / Math.PI);
+    if (angle > 180) angle = 360 - angle;
+    return angle;
+  }
+
+  function detectBodyOrientation(landmarks) {
+    const leftShoulder = landmarks[11], rightShoulder = landmarks[12];
+    const leftHip = landmarks[23], rightHip = landmarks[24];
+    const avgShoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+    const avgHipY = (leftHip.y + rightHip.y) / 2;
+    return (avgShoulderY < avgHipY - 0.15) ? 'squat' : 'horizontal';
+  }
+
+  function handleSquatMode(landmarks) {
+    const leftHip = landmarks[23], leftKnee = landmarks[25], leftAnkle = landmarks[27];
+    const rightHip = landmarks[24], rightKnee = landmarks[26], rightAnkle = landmarks[28];
+    const kneeAngle = (calculateAngle(leftHip, leftKnee, leftAnkle) + calculateAngle(rightHip, rightKnee, rightAnkle)) / 2;
+    if (kneeAngle < 90) {
+      STATE.inPosition = true;
+    } else if (STATE.inPosition && kneeAngle > 150) {
+      STATE.squatReps++;
+      STATE.inPosition = false;
+      updateReps();
+    }
+    document.getElementById('feedback').innerText = `Squat Mode\nKnee Angle: ${Math.round(kneeAngle)}°`;
+  }
+
+  function handlePushupMode(landmarks) {
+    const avgElbowAngle = (calculateAngle(landmarks[11], landmarks[13], landmarks[15]) +
+                           calculateAngle(landmarks[12], landmarks[14], landmarks[16])) / 2;
+    if (avgElbowAngle < 80) {
+      STATE.inPosition = true;
+    } else if (STATE.inPosition && avgElbowAngle > 150) {
+      STATE.pushupReps++;
+      STATE.inPosition = false;
+      updateReps();
+    }
+    document.getElementById('feedback').innerText = `Push-up Mode\nElbow Angle: ${Math.round(avgElbowAngle)}°`;
+  }
+
+  function checkPlankMode(landmarks) {
+    const avgElbowAngle = (calculateAngle(landmarks[11], landmarks[13], landmarks[15]) +
+                           calculateAngle(landmarks[12], landmarks[14], landmarks[16])) / 2;
+    if (avgElbowAngle >= 85 && avgElbowAngle <= 100) {
+      STATE.plankActive = true;
+      document.getElementById('plankStatus').innerText = 'Active';
+      document.getElementById('feedback').innerText = "Plank Mode";
+    } else {
+      STATE.plankActive = false;
+      document.getElementById('plankStatus').innerText = 'Inactive';
+    }
+  }
+
+  function handleArmRaise(landmarks) {
+    const shoulder = landmarks[11], hip = landmarks[23], elbow = landmarks[13];
+    const shoulderAngle = calculateAngle(hip, shoulder, elbow);
+    if (shoulderAngle > 80 && shoulderAngle < 100) {
+      STATE.armRaised = true;
+    } else if (STATE.armRaised && shoulderAngle < 45) {
+      STATE.armRaiseReps++;
+      STATE.armRaised = false;
+      updateReps();
+    }
+    document.getElementById('feedback').innerText = `Arm Raise Mode\nShoulder Angle: ${Math.round(shoulderAngle)}°`;
+  }
+
+  function handleBicepCurl(landmarks) {
+    const elbowAngle = calculateAngle(landmarks[11], landmarks[13], landmarks[15]);
+    if (elbowAngle < 40) {
+      STATE.bicepCurlInPosition = true;
+    } else if (STATE.bicepCurlInPosition && elbowAngle > 150) {
+      STATE.bicepCurlReps++;
+      STATE.bicepCurlInPosition = false;
+      updateReps();
+    }
+    document.getElementById('feedback').innerText = `Bicep Curl Mode\nElbow Angle: ${Math.round(elbowAngle)}°`;
+  }
+
+
+  function handleJumpingJacks(landmarks) {
+  
+    const ankleDistance = Math.abs(landmarks[27].x - landmarks[28].x);
+    const wristDistance = Math.abs(landmarks[15].x - landmarks[16].x);
+
+    const openThreshold = 0.3;
+    const closeThreshold = 0.2;
+    
+    if (!STATE.jumpingJackInPosition && ankleDistance > openThreshold && wristDistance > openThreshold) {
+      STATE.jumpingJackInPosition = true;
+    } else if (STATE.jumpingJackInPosition && ankleDistance < closeThreshold && wristDistance < closeThreshold) {
+      STATE.jumpingJackReps++;
+      STATE.jumpingJackInPosition = false;
+      updateReps();
+    }
+    document.getElementById('feedback').innerText = `Jumping Jacks Mode\nAnkle Dist: ${ankleDistance.toFixed(2)}, Wrist Dist: ${wristDistance.toFixed(2)}`;
+  }
+
+  function updateReps() {
+    document.getElementById('squatReps').innerText = STATE.squatReps;
+    document.getElementById('pushupReps').innerText = STATE.pushupReps;
+    document.getElementById('armRaiseReps').innerText = STATE.armRaiseReps;
+    document.getElementById('bicepCurlReps').innerText = STATE.bicepCurlReps;
+    document.getElementById('jumpingJackReps').innerText = STATE.jumpingJackReps;
+    updateUserScore();
+  }
+
+  function updateUserScore() {
+    const user = firebase.auth().currentUser;
+    if (user) {
+      const score = STATE.squatReps + STATE.pushupReps + STATE.armRaiseReps + STATE.bicepCurlReps + STATE.jumpingJackReps;
+      firebase.database().ref('scores/' + user.uid).set({
+        email: user.email,
+        score: score
+      });
+    }
+  }
+
+  function loadLeaderboard() {
+    firebase.database().ref('scores').orderByChild('score').limitToLast(10).on('value', snapshot => {
+      const leaderboardTable = document.getElementById('leaderboardTable');
+      leaderboardTable.innerHTML = '<tr><th>User</th><th>Score</th></tr>';
+      let scores = [];
+      snapshot.forEach(childSnapshot => {
+        scores.push(childSnapshot.val());
+      });
+      scores.sort((a, b) => b.score - a.score);
+      scores.forEach(entry => {
+        const row = document.createElement('tr');
+        const userCell = document.createElement('td');
+        userCell.innerText = entry.email;
+        const scoreCell = document.createElement('td');
+        scoreCell.innerText = entry.score;
+        row.appendChild(userCell);
+        row.appendChild(scoreCell);
+        leaderboardTable.appendChild(row);
+      });
+    });
+  }
+
+  function drawLandmarks(landmarks) {
+    ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    ctx.shadowColor = "rgba(0, 255, 0, 0.8)";
+    ctx.shadowBlur = 8;
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#1e90ff';
+    const connections = [
+      [11,12], [11,13], [13,15], [12,14], [14,16],
+      [11,23], [12,24], [23,25], [25,27], [24,26], [26,28]
+    ];
+    connections.forEach(([a, b]) => {
+      if (landmarks[a] && landmarks[b]) {
+        const ptA = landmarks[a], ptB = landmarks[b];
+        ctx.beginPath();
+        ctx.moveTo(ptA.x * canvasElement.width, ptA.y * canvasElement.height);
+        ctx.lineTo(ptB.x * canvasElement.width, ptB.y * canvasElement.height);
+        ctx.stroke();
+      }
+    });
+    ctx.lineWidth = 2;
+    ctx.fillStyle = 'green';
+    ctx.strokeStyle = 'green';
+    landmarks.forEach(landmark => {
+      const x = landmark.x * canvasElement.width;
+      const y = landmark.y * canvasElement.height;
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+    });
+    ctx.shadowBlur = 0;
+  }
+
+  const pose = new Pose({locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+  pose.setOptions({modelComplexity: 2, minDetectionConfidence: 0.8, minTrackingConfidence: 0.8});
+  pose.onResults(results => {
+    if (results.poseLandmarks) {
+      drawLandmarks(results.poseLandmarks);
+      processPose(results.poseLandmarks);
+    }
+  });
+
+ 
+  function processPose(landmarks) {
+  
+    const ankleDistance = Math.abs(landmarks[27].x - landmarks[28].x);
+    const wristDistance = Math.abs(landmarks[15].x - landmarks[16].x);
+    if (ankleDistance > 0.2 && wristDistance > 0.2) {
+      handleJumpingJacks(landmarks);
+    } else {
+      const orientation = detectBodyOrientation(landmarks);
+      if (orientation === 'horizontal') {
+        handlePushupMode(landmarks);
+        checkPlankMode(landmarks);
+      } else {
+        handleSquatMode(landmarks);
+        handleArmRaise(landmarks);
+        handleBicepCurl(landmarks);
+      }
+    }
+  }
+
+  new Camera(videoElement, {onFrame: async () => pose.send({image: videoElement})}).start();
+</script>
+</body>
+</html>

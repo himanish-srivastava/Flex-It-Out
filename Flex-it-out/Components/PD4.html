@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exercise Auto-Detection</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js"crossorigin="anonymous"></script>
+    
+</head>
+<body>
+    <video id="video" width="640" height="480" autoplay></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
+    <div id="feedback" style="position: absolute; top: 10px; left: 10px; color: white; background: rgba(0,0,0,0.5); padding: 10px;"></div>
+
+<script>
+const VIDEO_CONFIG = { facingMode: 'user', width: 640, height: 480 };
+
+const STATE = {
+    model: null,
+    detectedExercise: "None",
+    lastKneeAngle: 180,
+    lastElbowAngle: 180,
+    squatState: "up",  // "down" when in lowest position
+    pushupState: "up",
+    repCount: { squat: 0, pushup: 0 }
+};
+
+async function setupCamera() {
+    const video = document.getElementById('video');
+    const stream = await navigator.mediaDevices.getUserMedia({ video: VIDEO_CONFIG });
+    video.srcObject = stream;
+    return new Promise((resolve) => {
+        video.onloadedmetadata = () => {
+            video.play();
+            resolve(video);
+        };
+    });
+}
+
+async function loadModel() {
+    const detectorConfig = {
+        modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER,
+        enableSmoothing: true,
+        minPoseScore: 0.3
+    };
+    STATE.model = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, detectorConfig);
+}
+
+function calculateAngle(a, b, c) {
+    const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+    let angle = Math.abs(radians * 180 / Math.PI);
+    return angle > 180 ? 360 - angle : angle;
+}
+
+async function detectPose() {
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const feedbackDiv = document.getElementById('feedback');
+
+    ctx.drawImage(video, 0, 0, 640, 480);
+
+    const poses = await STATE.model.estimatePoses(video);
+    if (poses.length > 0) {
+        const keypoints = poses[0].keypoints;
+        drawKeypointsAndSkeleton(keypoints, ctx);
+
+        // Detect exercise
+        detectExercise(keypoints);
+
+        feedbackDiv.innerHTML = `Detected Exercise: ${STATE.detectedExercise} <br> Squats: ${STATE.repCount.squat} <br> Pushups: ${STATE.repCount.pushup}`;
+    }
+
+    requestAnimationFrame(detectPose);
+}
+
+function detectExercise(keypoints) {
+    const keypointsMap = {};
+    keypoints.forEach((kp) => { keypointsMap[kp.name] = { x: kp.x, y: kp.y, score: kp.score }; });
+
+    if (!keypointsMap['left_hip'] || !keypointsMap['left_knee'] || !keypointsMap['left_ankle']) return;
+
+    const kneeAngle = calculateAngle(keypointsMap['left_hip'], keypointsMap['left_knee'], keypointsMap['left_ankle']);
+    const elbowAngle = calculateAngle(keypointsMap['left_shoulder'], keypointsMap['left_elbow'], keypointsMap['left_wrist']);
+
+    // Detect Squats (Side View Preferred)
+    if (kneeAngle < 100 && STATE.squatState === "up") {
+        STATE.squatState = "down";
+    } else if (kneeAngle > 150 && STATE.squatState === "down") {
+        STATE.squatState = "up";
+        STATE.repCount.squat += 1;
+        STATE.detectedExercise = "Squat";
+    }
+
+    // Detect Pushups (Front or Side View)
+    if (elbowAngle < 90 && STATE.pushupState === "up") {
+        STATE.pushupState = "down";
+    } else if (elbowAngle > 150 && STATE.pushupState === "down") {
+        STATE.pushupState = "up";
+        STATE.repCount.pushup += 1;
+        STATE.detectedExercise = "Push-up";
+    }
+}
+
+function drawKeypointsAndSkeleton(keypoints, ctx) {
+    drawKeypoints(keypoints, ctx);
+    drawSkeleton(keypoints, ctx);
+}
+
+function drawKeypoints(keypoints, ctx) {
+    keypoints.forEach(({ x, y, score }) => {
+        if (score > 0.3) {
+            ctx.beginPath();
+            ctx.arc(x, y, 5, 0, 2 * Math.PI);
+            ctx.fillStyle = 'red';
+            ctx.fill();
+        }
+    });
+}
+
+function drawSkeleton(keypoints, ctx) {
+    const connections = [
+        ['left_shoulder', 'left_elbow'], ['left_elbow', 'left_wrist'],
+        ['right_shoulder', 'right_elbow'], ['right_elbow', 'right_wrist'],
+        ['left_hip', 'left_knee'], ['left_knee', 'left_ankle'],
+        ['right_hip', 'right_knee'], ['right_knee', 'right_ankle'],
+        ['left_shoulder', 'right_shoulder'], ['left_hip', 'right_hip']
+    ];
+
+    const keypointsMap = {};
+    keypoints.forEach(kp => keypointsMap[kp.name] = kp);
+
+    connections.forEach(([partA, partB]) => {
+        const kpA = keypointsMap[partA];
+        const kpB = keypointsMap[partB];
+
+        if (kpA.score > 0.3 && kpB.score > 0.3) {
+            ctx.beginPath();
+            ctx.moveTo(kpA.x, kpA.y);
+            ctx.lineTo(kpB.x, kpB.y);
+            ctx.strokeStyle = 'cyan';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+    });
+}
+
+(async function main() {
+    await setupCamera();
+    await loadModel();
+    detectPose();
+})();
+</script>
+
+</body>
+</html>

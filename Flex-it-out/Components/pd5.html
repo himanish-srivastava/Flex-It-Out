@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>FLEX-IT-OUT - Real-Time Fitness Tracker</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+
+    <style>
+        body {
+            background-color: #222;
+            color: white;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 0;
+            overflow: hidden;
+        }
+        video, canvas {
+            border: 2px solid #444;
+            margin-top: 10px;
+        }
+        #feedback, #counter {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 18px;
+        }
+        #activitySelector {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            padding: 10px;
+            border-radius: 8px;
+            background: #444;
+            color: white;
+            border: none;
+            font-size: 16px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>FLEX-IT-OUT - Real-Time Fitness Tracker</h1>
+    <select id="activitySelector">
+        <option value="squat">Squat</option>
+        <option value="pushup">Push-Up (Future)</option>
+    </select>
+    <div id="feedback">Loading...</div>
+    <div id="counter">Reps: 0</div>
+    <video id="video" width="640" height="480" autoplay playsinline></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
+
+<script>
+const STATE = {
+    activity: 'squat',
+    repCount: 0,
+    inPosition: false,  // For squat detection
+};
+
+const videoElement = document.getElementById('video');
+const canvasElement = document.getElementById('canvas');
+const ctx = canvasElement.getContext('2d');
+
+function calculateAngle(a, b, c) {
+    const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+    let angle = Math.abs(radians * 180 / Math.PI);
+    return angle > 180 ? 360 - angle : angle;
+}
+
+function analyzePose(landmarks) {
+    const feedbackDiv = document.getElementById('feedback');
+    const counterDiv = document.getElementById('counter');
+
+    if (STATE.activity === 'squat') {
+        const leftKneeAngle = calculateAngle(landmarks[24], landmarks[26], landmarks[28]);  // Hip -> Knee -> Ankle
+        const rightKneeAngle = calculateAngle(landmarks[23], landmarks[25], landmarks[27]);
+        const avgKneeAngle = (leftKneeAngle + rightKneeAngle) / 2;
+
+        if (avgKneeAngle < 100) {
+            STATE.inPosition = true;
+            feedbackDiv.innerHTML = "Good depth!";
+        } else if (STATE.inPosition && avgKneeAngle > 150) {
+            STATE.repCount++;
+            playFeedbackSound("Great squat!");
+            STATE.inPosition = false;  // Reset for next rep
+        }
+
+        feedbackDiv.innerHTML = `Knee Angle: ${Math.round(avgKneeAngle)}°<br>` + feedbackDiv.innerHTML;
+        counterDiv.innerHTML = `Reps: ${STATE.repCount}`;
+    }
+}
+
+function drawLandmarks(landmarks) {
+    ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+    // Draw points
+    for (const landmark of landmarks) {
+        ctx.beginPath();
+        ctx.arc(landmark.x * canvasElement.width, landmark.y * canvasElement.height, 5, 0, 2 * Math.PI);
+        ctx.fillStyle = 'red';
+        ctx.fill();
+    }
+
+    // Draw skeleton (example pairs, you can add more)
+    const connections = [
+        [11, 12], [11, 13], [13, 15], // Left arm
+        [12, 14], [14, 16], // Right arm
+        [11, 23], [12, 24], // Shoulders to hips
+        [23, 25], [25, 27], // Left leg
+        [24, 26], [26, 28]  // Right leg
+    ];
+    ctx.strokeStyle = 'cyan';
+    ctx.lineWidth = 2;
+    for (const [a, b] of connections) {
+        const pointA = landmarks[a];
+        const pointB = landmarks[b];
+        ctx.beginPath();
+        ctx.moveTo(pointA.x * canvasElement.width, pointA.y * canvasElement.height);
+        ctx.lineTo(pointB.x * canvasElement.width, pointB.y * canvasElement.height);
+        ctx.stroke();
+    }
+}
+
+function playFeedbackSound(message) {
+    const utterance = new SpeechSynthesisUtterance(message);
+    window.speechSynthesis.speak(utterance);
+}
+
+// Setup MediaPipe Pose
+const pose = new Pose({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+});
+pose.setOptions({
+    modelComplexity: 1,  // 0 = lite, 1 = full
+    smoothLandmarks: true,
+    enableSegmentation: false,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+});
+pose.onResults((results) => {
+    if (results.poseLandmarks) {
+        drawLandmarks(results.poseLandmarks);
+        analyzePose(results.poseLandmarks);
+    }
+});
+
+// Setup camera
+const camera = new Camera(videoElement, {
+    onFrame: async () => {
+        await pose.send({ image: videoElement });
+    },
+    width: 640,
+    height: 480
+});
+camera.start();
+
+document.getElementById('activitySelector').addEventListener('change', (e) => {
+    STATE.activity = e.target.value;
+    STATE.repCount = 0;
+});
+</script>
+</body>
+</html>

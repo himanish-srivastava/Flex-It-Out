@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>FLEX-IT-OUT - Real-Time Fitness Tracker</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #1a1a1a, #3d0000);
+            color: white;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        #app {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            transform: scale(1.2);
+        }
+        video, canvas {
+            background: black;
+            border: 2px solid #ff1e1e;
+            border-radius: 10px;
+            max-width: 100%;
+        }
+        #feedback, #counter {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.85);
+            color: #ffffff;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        #feedback { top: 10px; left: 10px; }
+        #counter { top: 10px; right: 10px; }
+        h1 { font-size: 24px; margin: 0 0 12px; color: #fff; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <h1>💪 FLEX-IT-OUT - Auto Fitness Tracker</h1>
+        <div style="position: relative;">
+            <video id="video" width="960" height="720" autoplay playsinline></video>
+            <canvas id="canvas" width="960" height="720"></canvas>
+            <div id="feedback">Loading...</div>
+            <div id="counter">Reps: 0</div>
+        </div>
+    </div>
+
+<script>
+const STATE = {
+    activity: 'unknown', // auto-detected
+    repCount: 0,
+    inPosition: false,
+    prevActivity: null,
+};
+
+const videoElement = document.getElementById('video');
+const canvasElement = document.getElementById('canvas');
+const ctx = canvasElement.getContext('2d');
+
+function calculateAngle(a, b, c) {
+    const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+    let angle = Math.abs(radians * 180 / Math.PI);
+    return angle > 180 ? 360 - angle : angle;
+}
+
+function detectExercise(landmarks) {
+    const leftHip = landmarks[23];
+    const rightHip = landmarks[24];
+    const leftShoulder = landmarks[11];
+    const rightShoulder = landmarks[12];
+
+    const hipY = (leftHip.y + rightHip.y) / 2;
+    const shoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+
+    const verticalDistance = Math.abs(hipY - shoulderY) * canvasElement.height;
+
+    if (verticalDistance > 300) {
+        return 'squat';  // Standing posture detected
+    } else {
+        return 'pushup';  // Horizontal posture detected
+    }
+}
+
+function analyzePose(landmarks) {
+    const feedbackDiv = document.getElementById('feedback');
+    const counterDiv = document.getElementById('counter');
+
+    const detectedActivity = detectExercise(landmarks);
+
+    if (detectedActivity !== STATE.prevActivity) {
+        STATE.repCount = 0; // Reset reps when switching exercise
+        STATE.inPosition = false;
+        STATE.prevActivity = detectedActivity;
+    }
+
+    STATE.activity = detectedActivity;
+
+    if (STATE.activity === 'squat') {
+        const leftKneeAngle = calculateAngle(landmarks[24], landmarks[26], landmarks[28]);
+        const rightKneeAngle = calculateAngle(landmarks[23], landmarks[25], landmarks[27]);
+        const avgKneeAngle = (leftKneeAngle + rightKneeAngle) / 2;
+
+        if (avgKneeAngle < 100) {
+            STATE.inPosition = true;
+            feedbackDiv.innerHTML = "✅ Good Depth!";
+        } else if (STATE.inPosition && avgKneeAngle > 150) {
+            STATE.repCount++;
+            playFeedbackSound("Great squat!");
+            STATE.inPosition = false;
+        }
+        feedbackDiv.innerHTML = `Squat Mode<br>Knee Angle: ${Math.round(avgKneeAngle)}°`;
+    }
+
+    if (STATE.activity === 'pushup') {
+        const leftElbowAngle = calculateAngle(landmarks[11], landmarks[13], landmarks[15]);
+        const rightElbowAngle = calculateAngle(landmarks[12], landmarks[14], landmarks[16]);
+        const avgElbowAngle = (leftElbowAngle + rightElbowAngle) / 2;
+
+        if (avgElbowAngle < 80) {
+            STATE.inPosition = true;
+            feedbackDiv.innerHTML = "✅ Good Push-Up Depth!";
+        } else if (STATE.inPosition && avgElbowAngle > 160) {
+            STATE.repCount++;
+            playFeedbackSound("Great push-up!");
+            STATE.inPosition = false;
+        }
+        feedbackDiv.innerHTML = `Push-Up Mode<br>Elbow Angle: ${Math.round(avgElbowAngle)}°`;
+    }
+
+    counterDiv.innerHTML = `Reps: ${STATE.repCount}`;
+}
+
+function drawLandmarks(landmarks) {
+    ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+    for (const landmark of landmarks) {
+        ctx.beginPath();
+        ctx.arc(landmark.x * canvasElement.width, landmark.y * canvasElement.height, 6, 0, 2 * Math.PI);
+        ctx.fillStyle = '#ff1e1e';
+        ctx.fill();
+    }
+
+    const connections = [
+        [11, 12], [11, 13], [13, 15],
+        [12, 14], [14, 16],
+        [11, 23], [12, 24],
+        [23, 25], [25, 27],
+        [24, 26], [26, 28]
+    ];
+    ctx.strokeStyle = '#ff1e1e';
+    ctx.lineWidth = 2;
+
+    for (const [a, b] of connections) {
+        const pointA = landmarks[a];
+        const pointB = landmarks[b];
+        ctx.beginPath();
+        ctx.moveTo(pointA.x * canvasElement.width, pointA.y * canvasElement.height);
+        ctx.lineTo(pointB.x * canvasElement.width, pointB.y * canvasElement.height);
+        ctx.stroke();
+    }
+}
+
+function playFeedbackSound(message) {
+    const utterance = new SpeechSynthesisUtterance(message);
+    utterance.rate = 1.1;
+    window.speechSynthesis.speak(utterance);
+}
+
+const pose = new Pose({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+});
+pose.setOptions({
+    modelComplexity: 1,
+    smoothLandmarks: true,
+    enableSegmentation: false,
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.7
+});
+pose.onResults((results) => {
+    if (results.poseLandmarks) {
+        drawLandmarks(results.poseLandmarks);
+        analyzePose(results.poseLandmarks);
+    }
+});
+
+const camera = new Camera(videoElement, {
+    onFrame: async () => {
+        await pose.send({ image: videoElement });
+    },
+    width: 1280,
+    height: 720
+});
+camera.start();
+</script>
+</body>
+</html>

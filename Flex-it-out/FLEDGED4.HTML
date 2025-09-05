@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FLEX-IT-OUT - Real-Time Fitness Tracker</title>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #1a1a1a, #3d0000);
+      color: white;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    #auth-section, #profile-section, #app, #leaderboard-section, #challenges-section, #voice-controls {
+      margin: 10px;
+      width: 90%;
+      max-width: 960px;
+    }
+    #auth-section, #profile-section, #voice-controls {
+      text-align: center;
+    }
+    input, button {
+      padding: 8px;
+      margin: 5px;
+      font-size: 1rem;
+    }
+    video, canvas {
+      border: 2px solid #ff1e1e;
+      border-radius: 10px;
+      display: block;
+      margin: auto;
+    }
+    table {
+      margin: 10px auto;
+      border-collapse: collapse;
+      width: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      color: white;
+    }
+    table, th, td {
+      border: 1px solid #ff1e1e;
+    }
+    th, td {
+      padding: 8px;
+      text-align: center;
+    }
+    #feedback {
+      text-align: center;
+      margin: 5px;
+    }
+    #leaderboard-section, #challenges-section {
+      background: rgba(0,0,0,0.6);
+      padding: 10px;
+      border-radius: 10px;
+    }
+    #voice-status {
+      color: #00ff00;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div id="auth-section">
+    <h2>Login / Sign Up</h2>
+    <input type="email" id="email" placeholder="Email">
+    <input type="password" id="password" placeholder="Password">
+    <br>
+    <button id="loginBtn">Login</button>
+    <button id="signupBtn">Sign Up</button>
+  </div>
+
+  <div id="profile-section" style="display:none;">
+    <p>Welcome, <span id="user-email"></span>! <button id="logoutBtn">Logout</button></p>
+  </div>
+
+  <div id="voice-controls" style="display:none;">
+    <button id="startVoice">Start Voice Commands</button>
+    <p id="voice-status">Voice: Off</p>
+  </div>
+
+  <div id="app" style="display:none;">
+    <h1>💪 FLEX-IT-OUT - Real-Time Fitness Tracker</h1>
+    <video id="video" width="960" height="720" autoplay playsinline></video>
+    <canvas id="canvas" width="960" height="720"></canvas>
+    <div id="feedback">Loading...</div>
+    <table>
+      <tr><th>Exercise</th><th>Reps</th></tr>
+      <tr><td>Squats</td><td id="squatReps">0</td></tr>
+      <tr><td>Push-ups</td><td id="pushupReps">0</td></tr>
+      <tr><td>Plank</td><td id="plankStatus">Inactive</td></tr>
+      <tr><td>Arm Raises</td><td id="armRaiseReps">0</td></tr>
+      <tr><td>Bicep Curls</td><td id="bicepCurlReps">0</td></tr>
+      <tr><td>Jumping Jacks</td><td id="jumpingJackReps">0</td></tr>
+    </table>
+  </div>
+
+  <div id="leaderboard-section" style="display:none;">
+    <h2>Leaderboard</h2>
+    <table id="leaderboardTable">
+      <tr><th>User</th><th>Score</th></tr>
+    </table>
+  </div>
+
+  <div id="challenges-section" style="display:none;">
+    <h2>Challenges</h2>
+    <ul>
+      <li>Complete 100 Squats in a week</li>
+      <li>Achieve 50 Push-ups in a session</li>
+      <li>Perform 30 Arm Raises in one go</li>
+      <li>Score top on the leaderboard!</li>
+      <li>Do 20 Jumping Jacks in a session</li>
+    </ul>
+  </div>
+
+<script>
+  var firebaseConfig = {
+    apiKey: "AIzaSyAC9_7JYVxliRtlH7uz2fJz_lzms1AU0PQ",
+    authDomain: "flex-it-out-2948e.firebaseapp.com",
+    projectId: "flex-it-out-2948e",
+    storageBucket: "flex-it-out-2948e.firebasestorage.app",
+    messagingSenderId: "854403347852",
+    appId: "1:854403347852:web:748656ef30b4bd3ca612a9",
+    measurementId: "G-6HKXK6M0DB"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+
+  // Authentication and UI elements
+  const authSection = document.getElementById('auth-section');
+  const profileSection = document.getElementById('profile-section');
+  const appSection = document.getElementById('app');
+  const leaderboardSection = document.getElementById('leaderboard-section');
+  const challengesSection = document.getElementById('challenges-section');
+  const emailInput = document.getElementById('email');
+  const passwordInput = document.getElementById('password');
+  const loginBtn = document.getElementById('loginBtn');
+  const signupBtn = document.getElementById('signupBtn');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const userEmailSpan = document.getElementById('user-email');
+
+  // Pose detection elements
+  const videoElement = document.getElementById('video');
+  const canvasElement = document.getElementById('canvas');
+  const ctx = canvasElement.getContext('2d');
+  
+  // Voice recognition
+  const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+  const synthesis = window.speechSynthesis;
+  let isListening = false;
+  const voiceStatus = document.getElementById('voice-status');
+  const startVoiceBtn = document.getElementById('startVoice');
+
+  // Application state
+  const STATE = {
+    squatReps: 0,
+    pushupReps: 0,
+    armRaiseReps: 0,
+    bicepCurlReps: 0,
+    jumpingJackReps: 0,
+    plankActive: false,
+    inPosition: false,
+    jumpingJackInPosition: false
+  };
+
+  let CURRENT_EXERCISE = 'squat';
+
+  // Firebase Authentication
+  loginBtn.addEventListener('click', () => {
+    firebase.auth().signInWithEmailAndPassword(emailInput.value, passwordInput.value)
+      .catch(error => alert(error.message));
+  });
+
+  signupBtn.addEventListener('click', () => {
+    firebase.auth().createUserWithEmailAndPassword(emailInput.value, passwordInput.value)
+      .then((userCredential) => {
+        alert("Sign-up successful: " + userCredential.user.email);
+      })
+      .catch(error => alert(error.message));
+  });
+
+  logoutBtn.addEventListener('click', () => {
+    firebase.auth().signOut();
+  });
+
+  firebase.auth().onAuthStateChanged(user => {
+    if (user) {
+      userEmailSpan.innerText = user.email;
+      authSection.style.display = 'none';
+      profileSection.style.display = 'block';
+      appSection.style.display = 'block';
+      leaderboardSection.style.display = 'block';
+      challengesSection.style.display = 'block';
+      document.getElementById('voice-controls').style.display = 'block';
+      loadLeaderboard();
+    } else {
+      authSection.style.display = 'block';
+      profileSection.style.display = 'none';
+      appSection.style.display = 'none';
+      leaderboardSection.style.display = 'none';
+      challengesSection.style.display = 'none';
+      document.getElementById('voice-controls').style.display = 'none';
+    }
+  });
+
+  // Voice command setup
+  recognition.continuous = true;
+  recognition.interimResults = false;
+  recognition.lang = 'en-US';
+
+  recognition.onresult = (event) => {
+    const command = event.results[event.results.length-1][0].transcript.toLowerCase();
+    handleVoiceCommand(command);
+  };
+
+  recognition.onerror = (event) => {
+    console.error('Speech recognition error:', event.error);
+    voiceStatus.textContent = `Voice: Error - ${event.error}`;
+  };
+
+  startVoiceBtn.addEventListener('click', () => {
+    if (!isListening) {
+      recognition.start();
+      voiceStatus.textContent = "Voice: Listening";
+      isListening = true;
+      startVoiceBtn.textContent = "Stop Voice Commands";
+    } else {
+      recognition.stop();
+      voiceStatus.textContent = "Voice: Off";
+      isListening = false;
+      startVoiceBtn.textContent = "Start Voice Commands";
+    }
+  });
+
+  function speak(text) {
+    const utterance = new SpeechSynthesisUtterance(text);
+    synthesis.speak(utterance);
+  }
+
+  function handleVoiceCommand(command) {
+    if (command.includes('start')) {
+      if (command.includes('squat')) {
+        CURRENT_EXERCISE = 'squat';
+        speak("Starting squat tracking");
+      } else if (command.includes('push-up')) {
+        CURRENT_EXERCISE = 'pushup';
+        speak("Starting push-up tracking");
+      } else if (command.includes('jumping jack')) {
+        CURRENT_EXERCISE = 'jumpingjack';
+        speak("Starting jumping jacks tracking");
+      }
+    } else if (command.includes('reset')) {
+      resetCounters();
+      speak("Counters reset");
+    } else if (command.includes('help')) {
+      speak("Available commands: start squat, start push-up, start jumping jacks, reset counters");
+    }
+  }
+
+  // Improved jumping jack detection
+  function handleJumpingJacks(landmarks) {
+    const leftShoulder = landmarks[11];
+    const rightShoulder = landmarks[12];
+    const leftElbow = landmarks[13];
+    const rightElbow = landmarks[14];
+    const leftWrist = landmarks[15];
+    const rightWrist = landmarks[16];
+    const leftAnkle = landmarks[27];
+    const rightAnkle = landmarks[28];
+
+    // Calculate distances and angles
+    const ankleDistance = Math.abs(leftAnkle.x - rightAnkle.x);
+    const wristDistance = Math.abs(leftWrist.x - rightWrist.x);
+    const leftArmAngle = calculateAngle(leftShoulder, leftElbow, leftWrist);
+    const rightArmAngle = calculateAngle(rightShoulder, rightElbow, rightWrist);
+
+    // Detection logic
+    const armsExtended = leftArmAngle > 160 && rightArmAngle > 160;
+    const armsSpread = wristDistance > 0.4;
+    const legsSpread = ankleDistance > 0.25;
+    const armsRaised = leftWrist.y < leftShoulder.y && rightWrist.y < rightShoulder.y;
+
+    if (armsExtended && armsSpread && legsSpread && armsRaised) {
+      if (!STATE.jumpingJackInPosition) {
+        STATE.jumpingJackInPosition = true;
+        speak("Position correct, start!");
+      }
+    } else if (STATE.jumpingJackInPosition && wristDistance < 0.2 && ankleDistance < 0.15) {
+      STATE.jumpingJackReps++;
+      STATE.jumpingJackInPosition = false;
+      updateReps();
+      speak("Good rep!");
+    }
+
+    document.getElementById('feedback').innerText = 
+      `Jumping Jacks\nArms: ${armsSpread ? 'Spread' : 'Closed'}\nLegs: ${legsSpread ? 'Spread' : 'Closed'}`;
+  }
+
+  // Common utility functions
+  function calculateAngle(a, b, c) {
+    const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+    let angle = Math.abs(radians * 180 / Math.PI);
+    return angle > 180 ? 360 - angle : angle;
+  }
+
+  function updateReps() {
+    document.getElementById('squatReps').innerText = STATE.squatReps;
+    document.getElementById('pushupReps').innerText = STATE.pushupReps;
+    document.getElementById('armRaiseReps').innerText = STATE.armRaiseReps;
+    document.getElementById('bicepCurlReps').innerText = STATE.bicepCurlReps;
+    document.getElementById('jumpingJackReps').innerText = STATE.jumpingJackReps;
+    updateUserScore();
+  }
+
+  function resetCounters() {
+    STATE.squatReps = 0;
+    STATE.pushupReps = 0;
+    STATE.armRaiseReps = 0;
+    STATE.bicepCurlReps = 0;
+    STATE.jumpingJackReps = 0;
+    updateReps();
+  }
+
+  // Pose detection setup
+  const pose = new Pose({locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+  pose.setOptions({modelComplexity: 2, minDetectionConfidence: 0.8, minTrackingConfidence: 0.8});
+  pose.onResults(results => {
+    if (results.poseLandmarks) {
+      drawLandmarks(results.poseLandmarks);
+      processPose(results.poseLandmarks);
+    }
+  });
+
+  function processPose(landmarks) {
+    switch(CURRENT_EXERCISE) {
+      case 'jumpingjack':
+        handleJumpingJacks(landmarks);
+        break;
+      case 'squat':
+        handleSquatMode(landmarks);
+        break;
+      case 'pushup':
+        handlePushupMode(landmarks);
+        break;
+      default:
+        handleSquatMode(landmarks);
+    }
+  }
+
+  // Initialize camera
+  new Camera(videoElement, {onFrame: async () => pose.send({image: videoElement})}).start();
+
+  // Remaining utility functions (drawLandmarks, updateUserScore, loadLeaderboard)
+  // ... (keep the same implementation as original code for these functions)
+</script>
+</body>
+</html>

@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>FLEX-IT-OUT - Real-Time Fitness Tracker</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    
+    <style>
+        body {
+            background-color: #222;
+            color: white;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 0;
+            overflow: hidden;
+        }
+        video, canvas {
+            border: 2px solid #444;
+            margin-top: 10px;
+        }
+        #feedback, #counter {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 18px;
+        }
+        #activitySelector {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            padding: 10px;
+            border-radius: 8px;
+            background: #444;
+            color: white;
+            border: none;
+            font-size: 16px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>FLEX-IT-OUT - Real-Time Fitness Tracker</h1>
+    <select id="activitySelector">
+        <option value="squat">Squat</option>
+        <option value="pushup">Push-Up (Future)</option>
+    </select>
+    <div id="feedback">Loading...</div>
+    <div id="counter">Reps: 0</div>
+    <video id="video" width="640" height="480" autoplay playsinline></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
+
+<script>
+const VIDEO_CONFIG = { facingMode: 'user', width: 640, height: 480 };
+const STATE = {
+    model: null,
+    activity: 'squat',
+    repCount: 0,
+    inPosition: false,  // Track squat position for counting
+    referenceAngles: {
+        squat: { knee: 90, hip: 145 }
+    }
+};
+
+async function setupCamera() {
+    const video = document.getElementById('video');
+    const stream = await navigator.mediaDevices.getUserMedia({ video: VIDEO_CONFIG });
+    video.srcObject = stream;
+    return new Promise(resolve => {
+        video.onloadedmetadata = () => {
+            video.play();
+            resolve(video);
+        };
+    });
+}
+
+async function loadModel() {
+    const detectorConfig = {
+        modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER,
+        enableSmoothing: true,
+        minPoseScore: 0.3
+    };
+    STATE.model = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, detectorConfig);
+}
+
+function calculateAngle(a, b, c) {
+    const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+    let angle = Math.abs(radians * 180 / Math.PI);
+    return angle > 180 ? 360 - angle : angle;
+}
+
+async function detectPose() {
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const feedbackDiv = document.getElementById('feedback');
+    const counterDiv = document.getElementById('counter');
+
+    ctx.drawImage(video, 0, 0, 640, 480);
+
+    const poses = await STATE.model.estimatePoses(video);
+    if (poses.length > 0) {
+        const keypoints = poses[0].keypoints;
+        drawKeypoints(keypoints, ctx);
+        drawSkeleton(keypoints, ctx);
+
+        const feedback = analyzePose(keypoints);
+        feedbackDiv.innerHTML = feedback;
+        counterDiv.innerHTML = `Reps: ${STATE.repCount}`;
+    }
+
+    requestAnimationFrame(detectPose);
+}
+
+function analyzePose(keypoints) {
+    const feedback = [];
+    const keypointsMap = {};
+    keypoints.forEach(kp => keypointsMap[kp.name] = { x: kp.x, y: kp.y, score: kp.score });
+
+    if (STATE.activity === 'squat') {
+        const leftKneeAngle = calculateAngle(keypointsMap['left_hip'], keypointsMap['left_knee'], keypointsMap['left_ankle']);
+        const rightKneeAngle = calculateAngle(keypointsMap['right_hip'], keypointsMap['right_knee'], keypointsMap['right_ankle']);
+        const avgKneeAngle = (leftKneeAngle + rightKneeAngle) / 2;
+
+        if (avgKneeAngle < 100) {
+            STATE.inPosition = true;  // Deep enough for counting
+            feedback.push("Good depth!");
+        } else if (STATE.inPosition && avgKneeAngle > 150) {
+            STATE.repCount++;
+            playFeedbackSound("Good job! Keep going!");
+            STATE.inPosition = false;  // Reset for next squat
+        }
+
+        if (avgKneeAngle > STATE.referenceAngles.squat.knee + 15) {
+            feedback.push("Go deeper in your squat.");
+        } else if (avgKneeAngle < STATE.referenceAngles.squat.knee - 45) {
+            feedback.push("Don't go too low.");
+        }
+    }
+
+    return feedback.join('<br>') || "Great form!";
+}
+
+function drawKeypoints(keypoints, ctx) {
+    keypoints.forEach(({ x, y, score }) => {
+        if (score > 0.3) {
+            ctx.beginPath();
+            ctx.arc(x, y, 5, 0, 2 * Math.PI);
+            ctx.fillStyle = 'red';
+            ctx.fill();
+        }
+    });
+}
+
+function drawSkeleton(keypoints, ctx) {
+    const pairs = [
+        ['left_shoulder', 'right_shoulder'],
+        ['left_hip', 'right_hip'],
+        ['left_shoulder', 'left_elbow'],
+        ['left_elbow', 'left_wrist'],
+        ['right_shoulder', 'right_elbow'],
+        ['right_elbow', 'right_wrist'],
+        ['left_hip', 'left_knee'],
+        ['left_knee', 'left_ankle'],
+        ['right_hip', 'right_knee'],
+        ['right_knee', 'right_ankle']
+    ];
+
+    pairs.forEach(([partA, partB]) => {
+        const kpA = keypoints.find(kp => kp.name === partA);
+        const kpB = keypoints.find(kp => kp.name === partB);
+        if (kpA && kpB && kpA.score > 0.3 && kpB.score > 0.3) {
+            ctx.beginPath();
+            ctx.moveTo(kpA.x, kpA.y);
+            ctx.lineTo(kpB.x, kpB.y);
+            ctx.strokeStyle = 'cyan';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+    });
+}
+
+function playFeedbackSound(message) {
+    const utterance = new SpeechSynthesisUtterance(message);
+    window.speechSynthesis.speak(utterance);
+}
+
+document.getElementById('activitySelector').addEventListener('change', (e) => {
+    STATE.activity = e.target.value;
+    STATE.repCount = 0;  // Reset rep count when switching activities
+});
+
+(async function main() {
+    await setupCamera();
+    await loadModel();
+    detectPose();
+})();
+</script>
+</body>
+</html>
